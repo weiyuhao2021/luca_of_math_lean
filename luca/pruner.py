@@ -41,13 +41,6 @@ class Pruner:
         excess = length - self._base_length
         return math.exp(-excess / 50.0)
 
-    def metabolic_score(self, code: str) -> float:
-        """Return a 0-1 score where shorter, simpler code scores higher."""
-        length = len(code)
-        if length <= self._base_length:
-            return 1.0
-        return max(0.0, 1.0 - (length - self._base_length) / 200.0)
-
     # ------------------------------------------------------------------
     # Deduplication
     # ------------------------------------------------------------------
@@ -79,11 +72,6 @@ class Pruner:
     # ------------------------------------------------------------------
     # Urn maintenance
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def apply_decay(urn: "PolyaUrn", rate: float) -> None:
-        """Convenience method: apply exponential decay to the urn."""
-        urn.decay(rate)
 
     @staticmethod
     def prune_urn(urn: "PolyaUrn", max_size: int) -> int:

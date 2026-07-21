@@ -18,30 +18,37 @@ _STRUCTURAL: set[str] = {
     "fun", "λ", "if", "then", "else", "let", "have",
     "match", "with", "by", "rfl", "simp", "omega", "sorry",
     "=", "And", "Or", "Not", "Iff", "Exists", "∀", "∃",
+    "Eq", "intro", "intros", "apply", "exact", "cases",
+    "rcases", "decide",
 }
 
 # Tokens that can appear inside expressions
 _EXPR_TOKENS: set[str] = {
     "Nat.add", "Nat.mul", "Nat.sub", "Nat.succ", "Nat.pred",
     "Nat.mod", "Nat.div", "Nat.pow", "Nat.min", "Nat.max",
+    "Int.add", "Int.mul", "Int.sub", "Int.neg",
     "Bool.and", "Bool.or", "Bool.not",
     "List.map", "List.filter", "List.foldl", "List.length",
     "List.append", "List.reverse", "List.head?",
+    "List.range", "List.take", "List.drop", "List.sum",
+    "List.elem", "List.concat",
     "Option.map", "Option.bind", "Option.getD",
+    "Prod.fst", "Prod.snd", "Prod.mk",
 }
 
 # Literal values that can be leaf nodes
 _LITERALS: set[str] = {
-    "0", "1", "2", "true", "false", "()", "[]", "none",
+    "0", "1", "2", "3", "5", "10", "true", "false", "()", "[]", "none", "some",
 }
 
 # Types
 _TYPES: set[str] = {
     "Nat", "Bool", "Prop", "Unit", "String", "List", "Option", "Fin",
+    "Int", "Char", "Array", "Subtype", "Sigma", "Prod",
 }
 
 # Logic constants
-_LOGIC_CONSTANTS: set[str] = {"True", "False", "trivial", "absurd"}
+_LOGIC_CONSTANTS: set[str] = {"True", "False", "trivial", "absurd", "Decidable", "DecidableEq"}
 
 
 def _is_gene_name(token: str) -> bool:
@@ -245,10 +252,14 @@ class LeanAssembler:
             "Nat.add": 2, "Nat.mul": 2, "Nat.sub": 2,
             "Nat.mod": 2, "Nat.div": 2, "Nat.pow": 2,
             "Nat.min": 2, "Nat.max": 2,
+            "Int.add": 2, "Int.mul": 2, "Int.sub": 2, "Int.neg": 1,
             "Bool.and": 2, "Bool.or": 2, "Bool.not": 1,
             "List.map": 2, "List.filter": 2, "List.foldl": 3,
             "List.length": 1, "List.append": 2,
             "List.reverse": 1, "List.head?": 1,
+            "List.range": 1, "List.take": 2, "List.drop": 2,
+            "List.sum": 1, "List.elem": 2, "List.concat": 2,
             "Option.map": 2, "Option.bind": 2, "Option.getD": 2,
+            "Prod.fst": 1, "Prod.snd": 1, "Prod.mk": 2,
         }
         return arity_map.get(op, default)

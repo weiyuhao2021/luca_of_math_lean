@@ -29,7 +29,7 @@ luca_of_math_lean/
 - `EVOLUTION_OUTPUT_FILE`：`evolved_library.lean` 路径
 - `MAX_EXPRESSION_TOKENS`：单条表达式最多使用 token 数
 - `MAX_DEFINITION_LENGTH`：生成的 Lean 代码最大长度
-- 扩展初始 token 列表（含 qwen 建议的所有 token）
+- 扩展初始 token 列表至 106 个（含类型、值、自然数/整数运算、布尔、列表、Option、积类型、逻辑、构造、策略词，覆盖 Lean 4 Init 库核心元素）
 
 ## 3. `luca/urn.py` — Pólya 瓮核心
 - `PolyaUrn` 类，维护 `dict[str, float]`（token → 权重）
@@ -98,18 +98,31 @@ luca_of_math_lean/
 - 启动时检查 Lean 环境，打印欢迎信息
 
 ## 10. 天灾系统 (Catastrophes)
-- 设计多种天灾类型，随机触发，每种都有不同的生态效应：
-  - **质量灭绝** (`mass_extinction`)：随机移除瓮中 20%-40% 的低权重 token（模拟环境剧变）
+- 设计 6 种天灾类型，随机触发 + 生态位固化检测双重机制：
+  - **质量灭绝** (`mass_extinction`)：移除瓮中 80%-90% 的低权重 token（大灭绝——校准要求须彻底）
+  - **中等灭绝** (`moderate_extinction`)：移除 40%-60% 的低权重 token + 幸存者权重增强 1.1-1.5x（生态收缩与选择压力）
   - **基因漂变** (`genetic_drift`)：所有权重向均值回归 30%（模拟种群瓶颈）
   - **寒武纪大爆发** (`cambrian_explosion`)：从存活基因中两两组合生成新的复合 token（模拟共生/杂交）
   - **小行星撞击** (`asteroid_impact`)：随机删除 50% 的 token，但幸存者权重翻倍（模拟极端选择压力）
   - **冰河期** (`ice_age`)：所有 token 权重减半，但 `fun`/`λ` 等抽象构造 token 获得抗冻加成
-- 天灾概率约每 50-200 代触发一次，类型随机均匀选择
+- 触发条件：
+  - **定时触发**：每 50-200 代随机触发一次
+  - **停滞触发**：超过 100 代无存活基因 + 瓮容量 ≥ 80% MAX_URN_SIZE → 识别为"生态位固化"，强制触发天灾
 
 ## 11. 数据持久化
 - 成功编译的 Lean 定义追加写入 `evolved_library.lean`
-- 定期保存瓮的状态到 JSON（支持断点续跑）
+- 定期保存瓮的状态到 JSON（支持断点续跑），包含进化事件追踪器
 - 演化日志保存到 `evolution_log.jsonl`
+
+## 12. 进化事件追踪
+- **多细胞化检测**：新基因引用其他 `gene_N` 时，终端输出 `🧬 多细胞化!` 及共生基因列表
+- **纪元系统**：追踪五个演化纪元，每次天灾后检测是否满足切换条件
+  - 太古宙 → 原初汤时代（首次多细胞化 + 基因 token ≥ 3）
+  - 原初汤时代 → 大氧化时代（sorry 占比 > 50% + 多细胞 ≥ 2）
+  - 大氧化时代 → 真核时代（sorry 占比 < 20% + 基因 token ≥ 10）
+  - 真核时代 → 多细胞时代（多细胞事件 ≥ 10 + 基因 token ≥ 30）
+- **Sorry 占比追踪**：监控 sorry 在瓮中的权重占比，用于检测大氧化事件
+- 所有事件状态随 `urn_state.json` 持久化，支持断点续跑后恢复
 
 ## 实现顺序
 1. `pyproject.toml` / `requirements.txt`

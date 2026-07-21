@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import re
 import tempfile
 import time
 from typing import Optional
@@ -43,6 +44,7 @@ except ImportError:
 
 _CATASTROPHE_NAMES: dict[str, str] = {
     "mass_extinction": "质量灭绝",
+    "moderate_extinction": "中等灭绝",
     "genetic_drift": "基因漂变",
     "cambrian_explosion": "寒武纪大爆发",
     "asteroid_impact": "小行星撞击",
@@ -51,6 +53,7 @@ _CATASTROPHE_NAMES: dict[str, str] = {
 
 _CATASTROPHE_DESCRIPTIONS: dict[str, str] = {
     "mass_extinction": "环境剧变——低权重 token 被大量清除，仅强者幸存",
+    "moderate_extinction": "生态收缩——弱势 token 批量消亡，中等阶层面临洗牌",
     "genetic_drift": "种群瓶颈——所有基因权重向均值回归，多样性骤降",
     "cambrian_explosion": "共生大爆发——存活基因两两杂交，新复合 token 涌现",
     "asteroid_impact": "天外撞击——随机半数基因湮灭，幸存者获得超强选择优势",
@@ -63,13 +66,25 @@ def _apply_catastrophe(urn: PolyaUrn, catastrophe_type: str) -> str:
     weights = urn.weights
 
     if catastrophe_type == "mass_extinction":
-        # Remove 20-40% of the lowest-weight tokens
-        fraction = random.uniform(0.2, 0.4)
+        # Remove 80-90% of the lowest-weight tokens (per calibration: 大灭绝须彻底)
+        fraction = random.uniform(0.8, 0.9)
         sorted_items = sorted(weights.items(), key=lambda x: x[1])
         kill_count = max(1, int(len(sorted_items) * fraction))
         for t, _ in sorted_items[:kill_count]:
             del weights[t]
-        return f"移除 {kill_count} 个低权重 token（{fraction:.0%}）"
+        return f"大灭绝——移除 {kill_count} 个低权重 token（{fraction:.0%}），仅强者幸存"
+
+    elif catastrophe_type == "moderate_extinction":
+        # Remove 40-60% of the lowest-weight tokens (中等生态危机)
+        fraction = random.uniform(0.4, 0.6)
+        sorted_items = sorted(weights.items(), key=lambda x: x[1])
+        kill_count = max(1, int(len(sorted_items) * fraction))
+        for t, _ in sorted_items[:kill_count]:
+            del weights[t]
+        # Survivors get a modest boost (selection pressure)
+        for t in weights:
+            weights[t] *= random.uniform(1.1, 1.5)
+        return f"中等灭绝——清除 {kill_count} 个 token（{fraction:.0%}），幸存者权重增强"
 
     elif catastrophe_type == "genetic_drift":
         # Regress all weights toward the mean by 30%
@@ -165,6 +180,13 @@ class EvolutionEngine:
         self._running: bool = False
         self._catastrophe_timer: int = random.randint(50, 200)
 
+        # --- Evolution event trackers ---
+        self._last_alive_generation: int = 0       # Last generation that produced alive
+        self._stagnation_threshold: int = 100       # Generations without alive → stagnation
+        self._multicellular_count: int = 0          # Genes that reference other gene_N
+        self._era: str = "太古宙"                   # Current evolutionary era
+        self._era_transitions: list[tuple[int, str, str]] = []  # (gen, from_era, to_era)
+
         # Rich console
         self.console = Console() if _HAS_RICH else None
 
@@ -228,10 +250,15 @@ class EvolutionEngine:
 
         if result.alive:
             # 5a. ALIVE: reinforce, innovate, log, prune
+            self._last_alive_generation = self.generation
+
             penalty = self.pruner.metabolic_penalty(code)
             self.urn.reinforce(tokens, count=penalty)
             self.urn.innovate(gene_name)
             self.alive_count += 1
+
+            # --- Evolution event detection ---
+            self._detect_events(code, gene_name, tokens)
 
             # Append to evolved library
             self._append_to_library(code, gene_name)
@@ -259,10 +286,15 @@ class EvolutionEngine:
 
             self._log_dead(gene_name, code, "COMPILE_ERROR")
 
-        # 6. Catastrophe check
+        # 6. Catastrophe check (timer OR stagnation)
         self._catastrophe_timer -= 1
-        if self._catastrophe_timer <= 0:
-            self._trigger_catastrophe()
+        stagnation = (
+            self.generation - self._last_alive_generation > self._stagnation_threshold
+            and self.urn.size() >= MAX_URN_SIZE * 0.8
+        )
+        if self._catastrophe_timer <= 0 or stagnation:
+            trigger_reason = "定时触发" if self._catastrophe_timer <= 0 else "生态位固化"
+            self._trigger_catastrophe(trigger_reason)
             self._catastrophe_timer = random.randint(50, 200)
 
         # 7. Periodic state save
@@ -273,25 +305,132 @@ class EvolutionEngine:
     # Catastrophe system
     # ------------------------------------------------------------------
 
-    def _trigger_catastrophe(self) -> None:
+    def _trigger_catastrophe(self, reason: str = "定时触发") -> None:
         """Randomly select and apply a catastrophe."""
         ctype = random.choice(list(_CATASTROPHE_NAMES.keys()))
         name = _CATASTROPHE_NAMES[ctype]
         desc = _CATASTROPHE_DESCRIPTIONS[ctype]
         detail = _apply_catastrophe(self.urn, ctype)
 
+        # Detect era transition after catastrophe
+        self._check_era_transition()
+
         if self.console:
             panel = Panel(
                 f"[bold red]╔══════════════════════════════════════╗[/bold red]\n"
-                f"[bold red]║[/bold red]  [bold yellow]天灾降临: {name}[/bold yellow]\n"
+                f"[bold red]║[/bold red]  [bold yellow]天灾降临: {name}[/bold yellow]  [dim]({reason})[/dim]\n"
                 f"[bold red]║[/bold red]  {desc}\n"
                 f"[bold red]║[/bold red]  {detail}\n"
+                f"[bold red]║[/bold red]  [dim]当前纪元: {self._era}[/dim]\n"
                 f"[bold red]╚══════════════════════════════════════╝[/bold red]",
                 border_style="red",
             )
             self.console.print(panel)
         else:
-            print(f"\n!!! 天灾: {name} — {desc} ({detail})\n")
+            print(f"\n!!! 天灾: {name} ({reason}) — {desc} ({detail})\n")
+
+    # ------------------------------------------------------------------
+    # Evolution event detection
+    # ------------------------------------------------------------------
+
+    def _detect_events(self, code: str, gene_name: str, tokens: list[str]) -> None:
+        """Detect milestone evolution events in newly compiled code.
+
+        Tracks:
+        - Multicellularity: gene composes with other gene_N
+        - Sorry ratio: monitor for Great Oxidation Event
+        """
+        # --- Multicellular detection: does code reference other gene_N? ---
+        referenced_genes = re.findall(r"\bgene_\d+\b", code)
+        other_genes = [g for g in referenced_genes if g != gene_name]
+        if other_genes:
+            self._multicellular_count += 1
+            self._print_multicellular_event(gene_name, code, other_genes)
+
+        # --- Track sorry usage for Great Oxidation Event ---
+        # (era transition is checked in _check_era_transition)
+
+    def _check_era_transition(self) -> None:
+        """Check if the system has crossed an evolutionary era boundary."""
+        total = self.alive_count + self.dead_count
+        if total < 50:
+            return  # Not enough data
+
+        # Calculate sorry ratio from urn weights
+        sorry_keywords = {"sorry"}
+        sorry_weight = sum(
+            self.urn.weights.get(t, 0.0) for t in sorry_keywords if t in self.urn.weights
+        )
+        total_weight = self.urn.total_weight()
+        sorry_ratio = sorry_weight / max(1.0, total_weight)
+
+        # Count gene tokens in urn (evidence of multicellular building blocks)
+        gene_tokens = [t for t in self.urn.weights if re.match(r"^gene_\d+$", t)]
+        gene_count = len(gene_tokens)
+
+        new_era = self._era
+        if self._era == "太古宙":
+            # Transition to 原初汤时代: first gene tokens appear
+            if gene_count >= 3 and self._multicellular_count >= 1:
+                new_era = "原初汤时代"
+        elif self._era == "原初汤时代":
+            # Transition to 大氧化时代: sorry dominates (>50%) and multicellular > 5
+            if sorry_ratio > 0.5 and self._multicellular_count >= 2:
+                new_era = "大氧化时代"
+        elif self._era == "大氧化时代":
+            # Transition to 真核时代: sorry drops below 20%
+            if sorry_ratio < 0.2 and gene_count >= 10:
+                new_era = "真核时代"
+        elif self._era == "真核时代":
+            # Transition to 多细胞时代: lots of gene references
+            if self._multicellular_count >= 10 and gene_count >= 30:
+                new_era = "多细胞时代"
+
+        if new_era != self._era:
+            old_era = self._era
+            self._era = new_era
+            self._era_transitions.append((self.generation, old_era, new_era))
+            self._print_era_transition(old_era, new_era, sorry_ratio, gene_count)
+
+    def _print_multicellular_event(
+        self, gene_name: str, code: str, other_genes: list[str]
+    ) -> None:
+        """Print a multicellularity detection event."""
+        code_short = code.replace("\n", " ").strip()
+        if len(code_short) > 100:
+            code_short = code_short[:97] + "..."
+
+        genes_str = ", ".join(other_genes[:5])
+        if len(other_genes) > 5:
+            genes_str += f" ... (+{len(other_genes)-5})"
+
+        if self.console:
+            self.console.print(
+                f"  [bold magenta]🧬 多细胞化![/bold magenta] "
+                f"{gene_name} 共生基因: [cyan]{genes_str}[/cyan]"
+            )
+        else:
+            print(f"  🧬 多细胞化! {gene_name} 共生基因: {genes_str}")
+
+    def _print_era_transition(
+        self, old_era: str, new_era: str, sorry_ratio: float, gene_count: int
+    ) -> None:
+        """Print a major era transition milestone."""
+        if self.console:
+            panel = Panel(
+                f"[bold green]╔══════════════════════════════════════╗[/bold green]\n"
+                f"[bold green]║[/bold green]  [bold yellow]🔥 纪元更迭![/bold yellow]\n"
+                f"[bold green]║[/bold green]  {old_era} → [bold cyan]{new_era}[/bold cyan]\n"
+                f"[bold green]║[/bold green]  Sorry 占比: {sorry_ratio:.1%} | 基因 Token: {gene_count}\n"
+                f"[bold green]║[/bold green]  多细胞事件: {self._multicellular_count}\n"
+                f"[bold green]╚══════════════════════════════════════╝[/bold green]",
+                border_style="green",
+            )
+            self.console.print(panel)
+        else:
+            print(f"\n🔥 纪元更迭! {old_era} → {new_era}")
+            print(f"   Sorry 占比: {sorry_ratio:.1%} | 基因 Token: {gene_count}")
+            print(f"   多细胞事件: {self._multicellular_count}\n")
 
     # ------------------------------------------------------------------
     # Logging
@@ -318,12 +457,17 @@ class EvolutionEngine:
         if len(code_short) > 80:
             code_short = code_short[:77] + "..."
 
+        # Detect if this gene is multicellular
+        other_refs = re.findall(r"\bgene_\d+\b", code)
+        is_multicellular = any(g != gene_name for g in other_refs)
+        multi_tag = " [🧬多细胞]" if is_multicellular else ""
+
         syllogism = self.renderer.render(code, gene_name)
 
         if self.console:
             self.console.print(
                 f"[bold cyan][LUCA Epoch {self.generation:05d}][/bold cyan] "
-                f"[green]SAMPLING → CHECKING LEAN... [ALIVE!][/green] "
+                f"[green]SAMPLING → CHECKING LEAN... [ALIVE!]{multi_tag}[/green] "
                 f"({result.elapsed_ms:.0f}ms)"
             )
             self.console.print(f"  [dim]└─ Code:[/dim] {code_short}")
@@ -331,13 +475,13 @@ class EvolutionEngine:
             self.console.print(
                 f"  [dim]└─ Urn: {self.urn.size()} tokens | "
                 f"Alive={self.alive_count} Dead={self.dead_count} | "
-                f"Penalty={penalty:.3f}[/dim]"
+                f"纪元: [yellow]{self._era}[/yellow] | 多细胞: {self._multicellular_count}[/dim]"
             )
         else:
-            print(f"[LUCA Epoch {self.generation:05d}] SAMPLING → CHECKING LEAN... [ALIVE!] ({result.elapsed_ms:.0f}ms)")
+            print(f"[LUCA Epoch {self.generation:05d}] SAMPLING → CHECKING LEAN... [ALIVE!]{multi_tag} ({result.elapsed_ms:.0f}ms)")
             print(f"  └─ Code: {code_short}")
             print(f"  └─ {syllogism}")
-            print(f"  └─ Urn: {self.urn.size()} tokens | Alive={self.alive_count} Dead={self.dead_count}")
+            print(f"  └─ Urn: {self.urn.size()} tokens | Alive={self.alive_count} Dead={self.dead_count} | 纪元: {self._era} | 多细胞: {self._multicellular_count}")
 
     def _log_dead(self, gene_name: str, code: str, reason: str) -> None:
         """Log a failed compilation."""
@@ -386,7 +530,14 @@ class EvolutionEngine:
             )
             self.console.print(f"  存活率:     {survival_rate:.1f}%")
             self.console.print(f"  瓮中 Token: {self.urn.size()}")
+            self.console.print(f"  当前纪元:   [yellow]{self._era}[/yellow]")
+            self.console.print(f"  多细胞事件: {self._multicellular_count}")
             self.console.print(f"  耗时:       {elapsed:.1f}s")
+
+            if self._era_transitions:
+                self.console.print("\n[bold]纪元更迭史:[/bold]")
+                for gen, fr, to in self._era_transitions:
+                    self.console.print(f"  第{gen:06d}代: {fr} → [cyan]{to}[/cyan]")
 
             if top_tokens:
                 self.console.print("\n[bold]权重 TOP 10:[/bold]")
@@ -400,7 +551,13 @@ class EvolutionEngine:
             print(f"  存活:       {self.alive_count}")
             print(f"  消亡:       {self.dead_count}")
             print(f"  瓮中 Token: {self.urn.size()}")
+            print(f"  当前纪元:   {self._era}")
+            print(f"  多细胞事件: {self._multicellular_count}")
             print(f"  耗时:       {elapsed:.1f}s")
+            if self._era_transitions:
+                print("\n纪元更迭史:")
+                for gen, fr, to in self._era_transitions:
+                    print(f"  第{gen:06d}代: {fr} → {to}")
             if top_tokens:
                 print("\n权重 TOP 10:")
                 for t, w in top_tokens:
@@ -428,6 +585,10 @@ class EvolutionEngine:
             "alive_count": self.alive_count,
             "dead_count": self.dead_count,
             "urn": self.urn.to_dict(),
+            "last_alive_generation": self._last_alive_generation,
+            "multicellular_count": self._multicellular_count,
+            "era": self._era,
+            "era_transitions": self._era_transitions,
         }
         try:
             # Atomic write: write to temp file first, then rename.
@@ -462,6 +623,10 @@ class EvolutionEngine:
             self.generation = state.get("generation", 0)
             self.alive_count = state.get("alive_count", 0)
             self.dead_count = state.get("dead_count", 0)
+            self._last_alive_generation = state.get("last_alive_generation", 0)
+            self._multicellular_count = state.get("multicellular_count", 0)
+            self._era = state.get("era", "太古宙")
+            self._era_transitions = state.get("era_transitions", [])
             urn_data = state.get("urn", {})
             self.urn = PolyaUrn.from_dict(urn_data)
 

@@ -33,30 +33,41 @@ TMP_WORKSPACE: str = ".luca_tmp"
 # Initial token soup (expanded per qwen's suggestion)
 # ---------------------------------------------------------------------------
 INITIAL_TOKENS: list[str] = [
-    # Types
+    # ── 类型（化学元素周期表）──
     "Nat", "Bool", "Prop", "Unit", "String", "List", "Option", "Fin",
-    # Values
-    "0", "1", "2", "true", "false", "()", "[]", "none", "some",
-    # Arithmetic
+    "Int", "Char", "Array", "Subtype", "Sigma",
+    # ── 值 / 字面量 ──
+    "0", "1", "2", "3", "5", "10", "true", "false", "()", "[]", "none", "some",
+    # ── 自然数运算 ──
     "Nat.add", "Nat.mul", "Nat.sub", "Nat.succ", "Nat.pred",
     "Nat.mod", "Nat.div", "Nat.pow", "Nat.min", "Nat.max",
-    # Boolean
+    # ── 整数运算 ──
+    "Int.add", "Int.mul", "Int.sub", "Int.neg",
+    # ── 布尔运算 ──
     "Bool.and", "Bool.or", "Bool.not",
-    # List
+    # ── 列表操作 ──
     "List.map", "List.filter", "List.foldl", "List.length",
     "List.append", "List.reverse", "List.head?",
-    # Option
+    "List.range", "List.take", "List.drop", "List.sum",
+    "List.elem", "List.concat",
+    # ── Option 操作 ──
     "Option.map", "Option.bind", "Option.getD",
-    # Logic
+    # ── 积类型 ──
+    "Prod", "Prod.fst", "Prod.snd", "Prod.mk",
+    # ── 逻辑连接词与量词 ──
     "=", "And", "Or", "Not", "Iff", "Exists", "∀", "∃",
     "True", "False", "trivial", "absurd",
-    # Constructs
+    "Eq", "Decidable", "DecidableEq",
+    # ── 构造与关键字 ──
     "fun", "λ", "if", "then", "else", "let", "have",
     "match", "with", "by", "rfl", "simp", "omega",
-    "sorry",
-    # Structures
+    "decide", "sorry",
+    # ── 结构声明 ──
     "def", "theorem", "lemma", "example", "abbrev",
     "structure", "class", "instance",
+    # ── 策略词（tactic primitives）──
+    "intro", "intros", "apply", "exact", "cases",
+    "rcases",
 ]
 
 
