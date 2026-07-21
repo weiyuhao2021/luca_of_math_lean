@@ -22,7 +22,7 @@ from luca.config import (
     EVOLUTION_OUTPUT_FILE,
     URN_STATE_FILE,
     LEAN_TIMEOUT,
-    POPULATION_SIZE,
+    MAX_WORKERS,
 )
 
 
@@ -62,11 +62,11 @@ from luca.config import (
     help="Show top N tokens from saved state and exit.",
 )
 @click.option(
-    "--population", "-p",
+    "--workers", "-w",
     type=int,
-    default=POPULATION_SIZE,
+    default=MAX_WORKERS,
     show_default=True,
-    help="Candidates per generation (verified in parallel).",
+    help="Max concurrent Lean compiler threads (performance only).",
 )
 @click.option(
     "--seed", "-s",
@@ -81,7 +81,7 @@ def main(
     output: str,
     resume: bool,
     show_top: Optional[int],
-    population: int,
+    workers: int,
     seed: Optional[str],
 ) -> None:
     """luca_of_math_lean — 零 API 成本的数学演化内核.
@@ -109,7 +109,7 @@ def main(
         lean_timeout=timeout,
         output_file=output,
         resume=resume,
-        population_size=population,
+        workers=workers,
         seed_file=seed,
     )
     engine.run()

@@ -57,21 +57,22 @@ python main.py --max-generations 500
 | `--timeout` | `-t` | `2.0` | Seconds before killing a Lean compiler subprocess (guards against infinite loops in `simp`/`omega`). |
 | `--output` | `-o` | `evolved_library.lean` | Where to write successfully compiled genes. |
 | `--resume` | `-r` | `false` | Resume from `urn_state.json`. Restores token weights, generation counter, era, lineage tracking. |
-| `--population` | `-p` | `8` | Candidates per generation, verified in parallel. Fluctuates ±30% naturally. |
+| `--population` | `-p` | `8` | ~~REMOVED~~ — population now emerges from urn diversity, NOT a fixed parameter. |
+| `--workers` | `-w` | `8` | Max concurrent Lean threads. Purely performance; does NOT affect biology. |
 | `--seed` | `-s` | — | Path to a .lean seed file with pre-existing ancestral genes (LUCA). |
 | `--show-top N` | — | — | Print the top *N* tokens from a saved state and exit (inspect-only mode). |
 
 ### Typical Workflows
 
 ```powershell
-# Fresh start, quick test (8 candidates × 50 gens = 400 compiles)
+# Fresh start (initial pop ≈ 106 tokens × generations)
 python main.py --max-generations 50
 
-# High-throughput: 32 candidates per generation
-python main.py --max-generations 500 --population 32
+# High parallelism (16 Lean processes at once)
+python main.py --max-generations 500 --workers 16
 
-# Minimal: single-gene mode (original behavior)
-python main.py --max-generations 1000 --population 1
+# Minimal parallelism (1 Lean process)
+python main.py --max-generations 1000 --workers 1
 
 # Primordial soup (no ancestors — wait for first life to emerge)
 python main.py --max-generations 100000

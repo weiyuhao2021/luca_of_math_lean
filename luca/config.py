@@ -24,7 +24,7 @@ LEAN_TIMEOUT: float = 2.0        # Seconds before killing a lean subprocess
 # ---------------------------------------------------------------------------
 MAX_EXPRESSION_TOKENS: int = 8   # Max tokens sampled per candidate expression
 MAX_DEFINITION_LENGTH: int = 512 # Max chars in generated Lean code
-POPULATION_SIZE: int = 8         # Candidates per generation (parallel verification)
+MAX_WORKERS: int = 8             # Max concurrent Lean verification threads (performance only)
 
 # ---------------------------------------------------------------------------
 # Persistence

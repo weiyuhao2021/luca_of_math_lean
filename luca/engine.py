@@ -164,11 +164,11 @@ class EvolutionEngine:
         lean_timeout: Optional[float] = None,
         output_file: Optional[str] = None,
         resume: bool = False,
-        population_size: int = 8,
+        workers: int = 8,
         seed_file: Optional[str] = None,
     ) -> None:
         self.max_generations = max_generations
-        self._population_size = max(1, population_size)
+        self._workers = max(1, workers)
         self.output_file = output_file or EVOLUTION_OUTPUT_FILE
 
         # Modules
@@ -245,14 +245,24 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _step(self) -> None:
-        """Execute one generation: population_size candidates in parallel."""
-        # 1. Generate candidates (sequential — fast)
-        # Population fluctuates ±30% each generation (natural boom/bust cycles)
-        pop = max(1, int(self._population_size * random.uniform(0.7, 1.3)))
+        """Execute one generation: population = urn.size(), parallel verification.
+
+        Population is NOT a parameter — it emerges from the ecosystem.
+        Each distinct token in the urn gets one reproduction attempt.
+        Weighted sampling ensures fitter genes appear more frequently.
+        """
+        # 1. Generate candidates via weighted urn sampling
+        #    Population = number of distinct tokens in the gene pool
+        pop = max(1, self.urn.size())
+        gene_names = [t for t in self.urn.weights
+                      if re.match(r"^(gene_\d+|luca|I|K|S)$", t)]
         batch: list[tuple[list[str], str, str]] = []
         for _ in range(pop):
             k = random.randint(3, MAX_EXPRESSION_TOKENS)
             tokens = self.urn.sample(k)
+            # Endosymbiosis: 6% chance of horizontal gene transfer
+            if random.random() < 0.06 and gene_names:
+                tokens.append(random.choice(gene_names))
             code, gene_name = self.assembler.assemble(tokens)
             if self.pruner.is_duplicate(code):
                 self.dead_count += 1
@@ -261,10 +271,10 @@ class EvolutionEngine:
                 continue
             batch.append((tokens, code, gene_name))
 
-        # 2. Parallel Lean verification (the slow part)
+        # 2. Parallel Lean verification (workers = performance, not biology)
         if batch:
             lib = self._library_cache
-            workers = min(len(batch), 16)
+            workers = min(len(batch), self._workers)
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
                 future_map = {
                     pool.submit(
@@ -287,7 +297,7 @@ class EvolutionEngine:
                 self._last_catastrophe_gen = self.generation
             self._catastrophe_timer = CATASTROPHE_MIN_INTERVAL
 
-        # 4. Per-generation maintenance
+        # 5. Per-generation maintenance
         if self.generation % 10 == 0:
             self.urn.decay(DECAY_RATE)
         if self.generation % 5 == 0 and self.urn.size() > 0:
@@ -296,11 +306,11 @@ class EvolutionEngine:
                 self.urn.weights[t] *= 0.99
         self.pruner.prune_urn(self.urn, MAX_URN_SIZE)
 
-        # 5. Periodic state save (every 50 generations)
+        # 6. Periodic state save (every 50 generations)
         if self.generation % 50 == 0:
             self._save_state()
 
-        # 6. Commit generation
+        # 7. Commit generation
         self.generation += 1
 
     # ------------------------------------------------------------------
@@ -309,8 +319,10 @@ class EvolutionEngine:
 
     def _handle_candidate(
         self, tokens: list[str], code: str, gene_name: str, result
-    ) -> None:
-        """Process a single candidate's Lean verification result."""
+    ) -> bool:
+        """Process a single candidate's Lean verification result.
+
+        Returns True if the candidate survived (ALIVE)."""
         if result.alive:
             # --- Sorry detection ---
             has_sorry = "sorry" in code
@@ -332,11 +344,13 @@ class EvolutionEngine:
             self._library_cache = self._load_library_cache()
             self._log_alive(gene_name, code, result, penalty, is_tainted)
             self._write_log_entry(gene_name, code, "ALIVE", is_tainted)
+            return True
         else:
             self.dead_count += 1
             self.pruner.record_code(code)
             self._log_dead(gene_name, code, "COMPILE_ERROR")
             self._write_log_entry(gene_name, code, "DEAD", False)
+            return False
 
     # ------------------------------------------------------------------
     # Catastrophe system
