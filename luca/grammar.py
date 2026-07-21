@@ -183,14 +183,18 @@ class LeanAssembler:
     # Expression builder
     # ------------------------------------------------------------------
 
-    def _build_expression(self, tokens: list[str], arity: int = 2) -> str:
+    def _build_expression(
+        self, tokens: list[str], arity: int = 2, depth: int = 0,
+    ) -> str:
         """Recursively build an expression from tokens.
 
         Args:
             tokens: Available content tokens.
             arity: Desired number of sub-expressions (approximate).
+            depth: Current recursion depth (hard-capped at 6).
         """
-        if not tokens:
+        # Safety cap: force leaf after 6 levels of nesting
+        if depth >= 6 or not tokens:
             return "0"
 
         # Pick an operator token
@@ -215,7 +219,7 @@ class LeanAssembler:
                 arg_tokens = random.sample(
                     tokens, min(3, len(tokens))
                 ) if len(tokens) > 1 else tokens
-                args.append(self._build_expression(arg_tokens, arity=1))
+                args.append(self._build_expression(arg_tokens, arity=1, depth=depth + 1))
             else:
                 arg = self._pick_leaf(tokens, lits)
                 args.append(arg)

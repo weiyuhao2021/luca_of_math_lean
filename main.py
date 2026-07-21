@@ -22,6 +22,7 @@ from luca.config import (
     EVOLUTION_OUTPUT_FILE,
     URN_STATE_FILE,
     LEAN_TIMEOUT,
+    POPULATION_SIZE,
 )
 
 
@@ -60,12 +61,20 @@ from luca.config import (
     metavar="N",
     help="Show top N tokens from saved state and exit.",
 )
+@click.option(
+    "--population", "-p",
+    type=int,
+    default=POPULATION_SIZE,
+    show_default=True,
+    help="Candidates per generation (verified in parallel).",
+)
 def main(
     max_generations: int,
     timeout: float,
     output: str,
     resume: bool,
     show_top: Optional[int],
+    population: int,
 ) -> None:
     """luca_of_math_lean — 零 API 成本的数学演化内核.
 
@@ -92,6 +101,7 @@ def main(
         lean_timeout=timeout,
         output_file=output,
         resume=resume,
+        population_size=population,
     )
     engine.run()
 

@@ -46,14 +46,31 @@ class LeanSandbox:
     # ------------------------------------------------------------------
 
     def is_lean_available(self) -> bool:
-        """Check whether ``lean`` is on PATH and executable.
+        """Check whether ``lean`` is on PATH or in the default elan install.
+
+        Tries ``shutil.which`` first, then falls back to the standard
+        elan installation directory (``~/.elan/bin/lean``).  This makes
+        the sandbox robust against conda or other tools that may clobber
+        the PATH.
 
         Returns:
             True if Lean 4 is available.
         """
         if self._available is not None:
             return self._available
+
+        # 1) Try standard PATH lookup
         self._lean_bin = shutil.which("lean")
+
+        # 2) Fallback: default elan installation directory
+        if self._lean_bin is None:
+            elan_home = os.path.join(os.path.expanduser("~"), ".elan", "bin")
+            for candidate in ("lean.exe", "lean"):
+                path = os.path.join(elan_home, candidate)
+                if os.path.isfile(path) and os.access(path, os.X_OK):
+                    self._lean_bin = path
+                    break
+
         self._available = self._lean_bin is not None
         return self._available
 
@@ -73,18 +90,23 @@ class LeanSandbox:
     # Compilation check
     # ------------------------------------------------------------------
 
-    def verify(self, code: str, gene_name: str = "candidate") -> LeanResult:
+    def verify(
+        self, code: str, gene_name: str = "candidate",
+        library_code: str = "",
+    ) -> LeanResult:
         """Write *code* to a temp file and compile with ``lean``.
 
         Args:
             code: Lean 4 source code to verify.
             gene_name: Used for the temp filename (cosmetic).
+            library_code: Previously-evolved definitions to include
+                as compilation context (the "ancestral environment").
 
         Returns:
             LeanResult with alive=True iff exit_code == 0.
         """
-        # Ensure we have a preamble that makes the code standalone
-        full_code = self._wrap_code(code)
+        # Prepend ancestral library so candidate can reference prior genes
+        full_code = self._wrap_code(code, library_code)
 
         # Write to temp file
         filepath = os.path.join(self.workspace, f"{gene_name}.lean")
@@ -130,15 +152,19 @@ class LeanSandbox:
                     pass
 
     @staticmethod
-    def _wrap_code(code: str) -> str:
-        """Optionally wrap code with necessary imports/preamble.
+    def _wrap_code(code: str, library_code: str = "") -> str:
+        """Wrap candidate code with ancestral library as compilation context.
 
-        For simple expressions we don't need imports since Lean's Init
-        is always available.  We just ensure the code is non-empty.
+        The candidate is compiled in the environment of all previously
+        evolved definitions, allowing genuine gene-to-gene references
+        (the basis of multicellularity).
         """
         code = code.strip()
         if not code:
             return "example : True := trivial"
+        library = library_code.strip()
+        if library:
+            return library + "\n\n" + code
         return code
 
     def cleanup(self) -> None:

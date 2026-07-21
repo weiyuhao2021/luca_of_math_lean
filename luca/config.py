@@ -8,7 +8,11 @@ import os
 MAX_URN_SIZE: int = 500          # Max number of distinct tokens in the Pólya urn
 INNOVATION_RATE: float = 2.0     # Initial weight for newly invented tokens
 DECAY_RATE: float = 0.999        # Per-generation multiplicative weight decay
-CATASTROPHE_PROBABILITY: float = 0.005  # Per-generation chance of a catastrophe
+
+# Catastrophe: probability-driven by urn size (P = p0 × (size/MAX)^α)
+CATASTROPHE_BASE_P: float = 0.005    # p0: base probability at full urn
+CATASTROPHE_SIZE_EXPONENT: float = 2.0  # α: how steeply risk grows with size
+CATASTROPHE_MIN_INTERVAL: int = 20   # Minimum generations between catastrophes
 
 # ---------------------------------------------------------------------------
 # Lean compiler sandbox
@@ -20,6 +24,7 @@ LEAN_TIMEOUT: float = 2.0        # Seconds before killing a lean subprocess
 # ---------------------------------------------------------------------------
 MAX_EXPRESSION_TOKENS: int = 8   # Max tokens sampled per candidate expression
 MAX_DEFINITION_LENGTH: int = 512 # Max chars in generated Lean code
+POPULATION_SIZE: int = 8         # Candidates per generation (parallel verification)
 
 # ---------------------------------------------------------------------------
 # Persistence

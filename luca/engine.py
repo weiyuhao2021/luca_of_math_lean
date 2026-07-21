@@ -1,5 +1,6 @@
 """Main Evolution Loop -- the LUCA evolutionary engine with catastrophe system."""
 
+import concurrent.futures
 import json
 import math
 import os
@@ -13,7 +14,9 @@ from luca.config import (
     MAX_URN_SIZE,
     INNOVATION_RATE,
     DECAY_RATE,
-    CATASTROPHE_PROBABILITY,
+    CATASTROPHE_BASE_P,
+    CATASTROPHE_SIZE_EXPONENT,
+    CATASTROPHE_MIN_INTERVAL,
     MAX_EXPRESSION_TOKENS,
     EVOLUTION_OUTPUT_FILE,
     URN_STATE_FILE,
@@ -161,8 +164,10 @@ class EvolutionEngine:
         lean_timeout: Optional[float] = None,
         output_file: Optional[str] = None,
         resume: bool = False,
+        population_size: int = 8,
     ) -> None:
         self.max_generations = max_generations
+        self._population_size = max(1, population_size)
         self.output_file = output_file or EVOLUTION_OUTPUT_FILE
 
         # Modules
@@ -179,13 +184,16 @@ class EvolutionEngine:
         self.start_time: float = 0.0
         self._running: bool = False
         self._catastrophe_timer: int = random.randint(50, 200)
+        self._last_catastrophe_gen: int = 0   # For minimum interval enforcement
 
         # --- Evolution event trackers ---
-        self._last_alive_generation: int = 0       # Last generation that produced alive
-        self._stagnation_threshold: int = 100       # Generations without alive → stagnation
+        self._tainted_genes: set[str] = set()       # Genes containing/depending on sorry
         self._multicellular_count: int = 0          # Genes that reference other gene_N
         self._era: str = "太古宙"                   # Current evolutionary era
         self._era_transitions: list[tuple[int, str, str]] = []  # (gen, from_era, to_era)
+
+        # --- Library cache for compilation context ---
+        self._library_cache: str = ""  # Contents of evolved_library.lean
 
         # Rich console
         self.console = Console() if _HAS_RICH else None
@@ -213,9 +221,11 @@ class EvolutionEngine:
         self._running = True
         self.start_time = time.perf_counter()
 
+        # Save initial state so files exist from the start
+        self._save_state()
+
         try:
             while self._running and self.generation < self.max_generations:
-                self.generation += 1
                 self._step()
         except KeyboardInterrupt:
             self._print_warning("\n演化被用户中断。")
@@ -232,74 +242,96 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _step(self) -> None:
-        """Execute one generation of the evolution cycle."""
-        # 1. Sample tokens
-        k = random.randint(3, MAX_EXPRESSION_TOKENS)
-        tokens = self.urn.sample(k)
+        """Execute one generation: population_size candidates in parallel."""
+        # 1. Generate candidates (sequential — fast)
+        batch: list[tuple[list[str], str, str]] = []
+        for _ in range(self._population_size):
+            k = random.randint(3, MAX_EXPRESSION_TOKENS)
+            tokens = self.urn.sample(k)
+            code, gene_name = self.assembler.assemble(tokens)
+            if self.pruner.is_duplicate(code):
+                self.dead_count += 1
+                self._log_dead(gene_name, code, "DUPLICATE")
+                self._write_log_entry(gene_name, code, "DEAD", False)
+                continue
+            batch.append((tokens, code, gene_name))
 
-        # 2. Assemble Lean candidate
-        code, gene_name = self.assembler.assemble(tokens)
+        # 2. Parallel Lean verification (the slow part)
+        if batch:
+            lib = self._library_cache
+            workers = min(len(batch), 16)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                future_map = {
+                    pool.submit(
+                        self.sandbox.verify, code, gene_name, lib
+                    ): (tokens, code, gene_name)
+                    for tokens, code, gene_name in batch
+                }
+                for future in concurrent.futures.as_completed(future_map):
+                    tokens, code, gene_name = future_map[future]
+                    result = future.result()
+                    self._handle_candidate(tokens, code, gene_name, result)
 
-        # 3. Dedup check
-        if self.pruner.is_duplicate(code):
-            self._log_dead(gene_name, code, "DUPLICATE")
-            return
+        # 3. Catastrophe check
+        self._catastrophe_timer -= 1
+        if self._catastrophe_timer <= 0:
+            urn_ratio = self.urn.size() / max(1, MAX_URN_SIZE)
+            p_catastrophe = CATASTROPHE_BASE_P * (urn_ratio ** CATASTROPHE_SIZE_EXPONENT)
+            if random.random() < p_catastrophe:
+                self._trigger_catastrophe("热力学灾变")
+                self._last_catastrophe_gen = self.generation
+            self._catastrophe_timer = CATASTROPHE_MIN_INTERVAL
 
-        # 4. Lean verification
-        result = self.sandbox.verify(code, gene_name)
+        # 4. Per-generation maintenance
+        if self.generation % 10 == 0:
+            self.urn.decay(DECAY_RATE)
+        if self.generation % 5 == 0 and self.urn.size() > 0:
+            # Slight penalty to dead-end tokens
+            for t in self.urn.weights:
+                self.urn.weights[t] *= 0.99
+        self.pruner.prune_urn(self.urn, MAX_URN_SIZE)
 
+        # 5. Periodic state save (every 50 generations)
+        if self.generation % 50 == 0:
+            self._save_state()
+
+        # 6. Commit generation
+        self.generation += 1
+
+    # ------------------------------------------------------------------
+    # Per-candidate result handler
+    # ------------------------------------------------------------------
+
+    def _handle_candidate(
+        self, tokens: list[str], code: str, gene_name: str, result
+    ) -> None:
+        """Process a single candidate's Lean verification result."""
         if result.alive:
-            # 5a. ALIVE: reinforce, innovate, log, prune
-            self._last_alive_generation = self.generation
+            # --- Sorry detection ---
+            has_sorry = "sorry" in code
+
+            # --- Taint propagation ---
+            referenced_genes = set(re.findall(r"\bgene_\d+\b", code))
+            referenced_genes.discard(gene_name)
+            is_tainted = has_sorry or bool(referenced_genes & self._tainted_genes)
+            if is_tainted:
+                self._tainted_genes.add(gene_name)
 
             penalty = self.pruner.metabolic_penalty(code)
             self.urn.reinforce(tokens, count=penalty)
             self.urn.innovate(gene_name)
             self.alive_count += 1
 
-            # --- Evolution event detection ---
             self._detect_events(code, gene_name, tokens)
-
-            # Append to evolved library
             self._append_to_library(code, gene_name)
-
-            # Log
-            self._log_alive(gene_name, code, result, penalty)
-
-            # Periodic decay
-            if self.generation % 10 == 0:
-                self.urn.decay(DECAY_RATE)
-
-            # Prune if oversized
-            self.pruner.prune_urn(self.urn, MAX_URN_SIZE)
-
+            self._library_cache = self._load_library_cache()
+            self._log_alive(gene_name, code, result, penalty, is_tainted)
+            self._write_log_entry(gene_name, code, "ALIVE", is_tainted)
         else:
-            # 5b. DEAD: discard
             self.dead_count += 1
             self.pruner.record_code(code)
-
-            # Slight penalty to overused dead-end tokens
-            if self.generation % 5 == 0:
-                for t in tokens:
-                    if t in self.urn.weights:
-                        self.urn.weights[t] *= 0.99
-
             self._log_dead(gene_name, code, "COMPILE_ERROR")
-
-        # 6. Catastrophe check (timer OR stagnation)
-        self._catastrophe_timer -= 1
-        stagnation = (
-            self.generation - self._last_alive_generation > self._stagnation_threshold
-            and self.urn.size() >= MAX_URN_SIZE * 0.8
-        )
-        if self._catastrophe_timer <= 0 or stagnation:
-            trigger_reason = "定时触发" if self._catastrophe_timer <= 0 else "生态位固化"
-            self._trigger_catastrophe(trigger_reason)
-            self._catastrophe_timer = random.randint(50, 200)
-
-        # 7. Periodic state save
-        if self.generation % 100 == 0:
-            self._save_state()
+            self._write_log_entry(gene_name, code, "DEAD", False)
 
     # ------------------------------------------------------------------
     # Catastrophe system
@@ -450,7 +482,8 @@ class EvolutionEngine:
             print(banner)
 
     def _log_alive(
-        self, gene_name: str, code: str, result, penalty: float
+        self, gene_name: str, code: str, result, penalty: float,
+        is_tainted: bool = False,
     ) -> None:
         """Log a successful compilation."""
         code_short = code.replace("\n", " ").strip()
@@ -462,12 +495,20 @@ class EvolutionEngine:
         is_multicellular = any(g != gene_name for g in other_refs)
         multi_tag = " [🧬多细胞]" if is_multicellular else ""
 
+        # Lineage tag
+        if is_tainted:
+            alive_tag = "[ALIVE★]"  # axiomatic lineage
+            lineage = "公理化谱系"
+        else:
+            alive_tag = "[ALIVE]"   # closed lineage
+            lineage = "封闭谱系"
+
         syllogism = self.renderer.render(code, gene_name)
 
         if self.console:
             self.console.print(
                 f"[bold cyan][LUCA Epoch {self.generation:05d}][/bold cyan] "
-                f"[green]SAMPLING → CHECKING LEAN... [ALIVE!]{multi_tag}[/green] "
+                f"[green]SAMPLING → CHECKING LEAN... {alive_tag}{multi_tag}[/green] "
                 f"({result.elapsed_ms:.0f}ms)"
             )
             self.console.print(f"  [dim]└─ Code:[/dim] {code_short}")
@@ -475,13 +516,13 @@ class EvolutionEngine:
             self.console.print(
                 f"  [dim]└─ Urn: {self.urn.size()} tokens | "
                 f"Alive={self.alive_count} Dead={self.dead_count} | "
-                f"纪元: [yellow]{self._era}[/yellow] | 多细胞: {self._multicellular_count}[/dim]"
+                f"纪元: [yellow]{self._era}[/yellow] | {lineage}[/dim]"
             )
         else:
-            print(f"[LUCA Epoch {self.generation:05d}] SAMPLING → CHECKING LEAN... [ALIVE!]{multi_tag} ({result.elapsed_ms:.0f}ms)")
+            print(f"[LUCA Epoch {self.generation:05d}] SAMPLING → CHECKING LEAN... {alive_tag}{multi_tag} ({result.elapsed_ms:.0f}ms)")
             print(f"  └─ Code: {code_short}")
             print(f"  └─ {syllogism}")
-            print(f"  └─ Urn: {self.urn.size()} tokens | Alive={self.alive_count} Dead={self.dead_count} | 纪元: {self._era} | 多细胞: {self._multicellular_count}")
+            print(f"  └─ Urn: {self.urn.size()} tokens | Alive={self.alive_count} Dead={self.dead_count} | 纪元: {self._era} | {lineage}")
 
     def _log_dead(self, gene_name: str, code: str, reason: str) -> None:
         """Log a failed compilation."""
@@ -531,6 +572,8 @@ class EvolutionEngine:
             self.console.print(f"  存活率:     {survival_rate:.1f}%")
             self.console.print(f"  瓮中 Token: {self.urn.size()}")
             self.console.print(f"  当前纪元:   [yellow]{self._era}[/yellow]")
+            self.console.print(f"  封闭谱系:   [green]{self.alive_count - len(self._tainted_genes)}[/green]")
+            self.console.print(f"  公理化谱系: [yellow]{len(self._tainted_genes)}[/yellow]  (含/依赖sorry)")
             self.console.print(f"  多细胞事件: {self._multicellular_count}")
             self.console.print(f"  耗时:       {elapsed:.1f}s")
 
@@ -552,6 +595,8 @@ class EvolutionEngine:
             print(f"  消亡:       {self.dead_count}")
             print(f"  瓮中 Token: {self.urn.size()}")
             print(f"  当前纪元:   {self._era}")
+            print(f"  封闭谱系:   {self.alive_count - len(self._tainted_genes)}")
+            print(f"  公理化谱系: {len(self._tainted_genes)}  (含/依赖sorry)")
             print(f"  多细胞事件: {self._multicellular_count}")
             print(f"  耗时:       {elapsed:.1f}s")
             if self._era_transitions:
@@ -567,6 +612,23 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+
+    def _write_log_entry(
+        self, gene_name: str, code: str, status: str, is_tainted: bool = False
+    ) -> None:
+        """Append one JSON line to evolution_log.jsonl."""
+        entry = {
+            "generation": self.generation,
+            "gene": gene_name,
+            "status": status,
+            "tainted": is_tainted,
+            "urn_size": self.urn.size(),
+        }
+        try:
+            with open(EVOLUTION_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
 
     def _append_to_library(self, code: str, gene_name: str) -> None:
         """Append a successfully verified definition to the evolved library."""
@@ -585,8 +647,9 @@ class EvolutionEngine:
             "alive_count": self.alive_count,
             "dead_count": self.dead_count,
             "urn": self.urn.to_dict(),
-            "last_alive_generation": self._last_alive_generation,
+            "last_alive_generation": self._last_catastrophe_gen,
             "multicellular_count": self._multicellular_count,
+            "tainted_genes": list(self._tainted_genes),
             "era": self._era,
             "era_transitions": self._era_transitions,
         }
@@ -623,8 +686,9 @@ class EvolutionEngine:
             self.generation = state.get("generation", 0)
             self.alive_count = state.get("alive_count", 0)
             self.dead_count = state.get("dead_count", 0)
-            self._last_alive_generation = state.get("last_alive_generation", 0)
+            self._last_catastrophe_gen = state.get("last_alive_generation", 0)
             self._multicellular_count = state.get("multicellular_count", 0)
+            self._tainted_genes = set(state.get("tainted_genes", []))
             self._era = state.get("era", "太古宙")
             self._era_transitions = state.get("era_transitions", [])
             urn_data = state.get("urn", {})
@@ -639,6 +703,8 @@ class EvolutionEngine:
 
             # Reset catastrophe timer to a fresh random interval
             self._catastrophe_timer = random.randint(50, 200)
+            # Rebuild library cache for compilation context
+            self._library_cache = self._load_library_cache()
 
             if self.console:
                 self.console.print(
@@ -652,6 +718,20 @@ class EvolutionEngine:
                 )
         except (OSError, json.JSONDecodeError):
             pass
+
+    # ------------------------------------------------------------------
+    # Library cache (compilation context)
+    # ------------------------------------------------------------------
+
+    def _load_library_cache(self) -> str:
+        """Load evolved_library.lean contents for compilation context."""
+        if os.path.exists(self.output_file):
+            try:
+                with open(self.output_file, "r", encoding="utf-8") as f:
+                    return f.read()
+            except OSError:
+                pass
+        return ""
 
     # ------------------------------------------------------------------
     # Top tokens display
