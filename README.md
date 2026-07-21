@@ -57,7 +57,8 @@ python main.py --max-generations 500
 | `--timeout` | `-t` | `2.0` | Seconds before killing a Lean compiler subprocess (guards against infinite loops in `simp`/`omega`). |
 | `--output` | `-o` | `evolved_library.lean` | Where to write successfully compiled genes. |
 | `--resume` | `-r` | `false` | Resume from `urn_state.json`. Restores token weights, generation counter, era, lineage tracking. |
-| `--population` | `-p` | `8` | Candidates per generation, verified in parallel. Higher = faster exploration but more CPU/memory. |
+| `--population` | `-p` | `8` | Candidates per generation, verified in parallel. Fluctuates ±30% naturally. |
+| `--seed` | `-s` | — | Path to a .lean seed file with pre-existing ancestral genes (LUCA). |
 | `--show-top N` | — | — | Print the top *N* tokens from a saved state and exit (inspect-only mode). |
 
 ### Typical Workflows
@@ -71,6 +72,15 @@ python main.py --max-generations 500 --population 32
 
 # Minimal: single-gene mode (original behavior)
 python main.py --max-generations 1000 --population 1
+
+# Primordial soup (no ancestors — wait for first life to emerge)
+python main.py --max-generations 100000
+
+# Seeded with a LUCA (identity function ancestor)
+python main.py --seed genesis/identity.lean --max-generations 5000
+
+# Combinator universe (I/K/S atomic building blocks)
+python main.py --seed genesis/combinators.lean --max-generations 5000
 
 # Long run with resume capability
 python main.py --max-generations 1000000

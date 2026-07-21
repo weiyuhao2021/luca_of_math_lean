@@ -165,6 +165,7 @@ class EvolutionEngine:
         output_file: Optional[str] = None,
         resume: bool = False,
         population_size: int = 8,
+        seed_file: Optional[str] = None,
     ) -> None:
         self.max_generations = max_generations
         self._population_size = max(1, population_size)
@@ -201,6 +202,8 @@ class EvolutionEngine:
         # Resume from previous state
         if resume:
             self._load_state()
+        elif seed_file:
+            self._init_seed(seed_file)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -244,8 +247,10 @@ class EvolutionEngine:
     def _step(self) -> None:
         """Execute one generation: population_size candidates in parallel."""
         # 1. Generate candidates (sequential — fast)
+        # Population fluctuates ±30% each generation (natural boom/bust cycles)
+        pop = max(1, int(self._population_size * random.uniform(0.7, 1.3)))
         batch: list[tuple[list[str], str, str]] = []
-        for _ in range(self._population_size):
+        for _ in range(pop):
             k = random.randint(3, MAX_EXPRESSION_TOKENS)
             tokens = self.urn.sample(k)
             code, gene_name = self.assembler.assemble(tokens)
@@ -608,6 +613,60 @@ class EvolutionEngine:
                 for t, w in top_tokens:
                     print(f"  {t:30s} {w:.2f}")
             print("=" * 60)
+
+    # ------------------------------------------------------------------
+    # Seed initialization (the First Cause)
+    # ------------------------------------------------------------------
+
+    def _init_seed(self, seed_path: str) -> None:
+        """Compile a seed .lean file and inject its genes as ancestral tokens.
+
+        The seed file is verified by Lean, appended to evolved_library.lean,
+        and each defined name becomes a token in the urn.  This provides
+        a LUCA (Last Universal Common Ancestor) for evolution to build on,
+        rather than starting from random noise alone.
+        """
+        if not os.path.isfile(seed_path):
+            self._print_error(f"Seed file not found: {seed_path}")
+            return
+
+        with open(seed_path, "r", encoding="utf-8") as f:
+            seed_code = f.read()
+
+        # Verify the seed compiles
+        result = self.sandbox.verify(seed_code, "genesis_seed")
+        if not result.alive:
+            self._print_error(
+                f"Seed file '{seed_path}' failed Lean verification.\n"
+                f"The seed must be valid Lean 4 code.\n"
+                f"Lean error: {result.stderr[:200]}"
+            )
+            return
+
+        # Extract gene names (def / theorem / lemma / example)
+        gene_names: list[str] = re.findall(
+            r"^\s*(?:def|theorem|lemma|example)\s+(\w+)",
+            seed_code, re.MULTILINE,
+        )
+        if not gene_names:
+            self._print_error("Seed file contains no def/theorem/lemma/example declarations.")
+            return
+
+        # Append seed to library
+        self._append_to_library(seed_code, "genesis_seed")
+        self._library_cache = self._load_library_cache()
+
+        # Inject each gene name as a token into the urn
+        for name in gene_names:
+            self.urn.weights[name] = self.urn.weights.get(name, 0.0) + INNOVATION_RATE
+
+        if self.console:
+            self.console.print(
+                f"[green]创世完成: 注入 {len(gene_names)} 个祖先基因"
+                f" ({', '.join(gene_names)})[/green]"
+            )
+        else:
+            print(f"创世完成: 注入 {len(gene_names)} 个祖先基因 ({', '.join(gene_names)})")
 
     # ------------------------------------------------------------------
     # Persistence

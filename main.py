@@ -68,6 +68,13 @@ from luca.config import (
     show_default=True,
     help="Candidates per generation (verified in parallel).",
 )
+@click.option(
+    "--seed", "-s",
+    type=str,
+    default=None,
+    metavar="FILE",
+    help="Path to a .lean seed file with pre-existing ancestral genes.",
+)
 def main(
     max_generations: int,
     timeout: float,
@@ -75,6 +82,7 @@ def main(
     resume: bool,
     show_top: Optional[int],
     population: int,
+    seed: Optional[str],
 ) -> None:
     """luca_of_math_lean — 零 API 成本的数学演化内核.
 
@@ -102,6 +110,7 @@ def main(
         output_file=output,
         resume=resume,
         population_size=population,
+        seed_file=seed,
     )
     engine.run()
 
