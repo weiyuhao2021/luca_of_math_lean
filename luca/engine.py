@@ -189,6 +189,7 @@ class EvolutionEngine:
 
         # --- Evolution event trackers ---
         self._tainted_genes: set[str] = set()       # Genes containing/depending on sorry
+        self._living_genes: list[dict] = []    # [{"name":..., "code":...}, ...] parent survivors
         self._multicellular_count: int = 0          # Genes that reference other gene_N
         self._era: str = "太古宙"                   # Current evolutionary era
         self._era_transitions: list[tuple[int, str, str]] = []  # (gen, from_era, to_era)
@@ -245,33 +246,49 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _step(self) -> None:
-        """Execute one generation: population = urn.size(), parallel verification.
+        """Execute one generation: parent reproduction + primordial soup.
 
-        Population is NOT a parameter — it emerges from the ecosystem.
-        Each distinct token in the urn gets one reproduction attempt.
-        Weighted sampling ensures fitter genes appear more frequently.
+        ~70% of candidates come from parent copy/mutation (genetic continuity).
+        ~30% come from weighted urn sampling (non-Markovian historical memory).
+        The urn preserves token weights across all of evolutionary history,
+        enabling convergent evolution and re-discovery of extinct patterns.
         """
-        # 1. Generate candidates via weighted urn sampling
-        #    Population = number of distinct tokens in the gene pool
-        pop = max(1, self.urn.size())
-        gene_names = [t for t in self.urn.weights
-                      if re.match(r"^(gene_\d+|luca|I|K|S)$", t)]
         batch: list[tuple[list[str], str, str]] = []
-        for _ in range(pop):
+
+        # --- Parent reproduction (always, if parents exist) ---
+        if self._living_genes:
+            gene_pool = [t for t in self.urn.weights
+                         if re.match(r"^(gene_\d+|luca|I|K|S)$", t)]
+            for parent in self._living_genes:
+                p_name = parent["name"]
+                p_code = parent["code"]
+                # 1 exact copy (new name)
+                self.assembler._gene_counter += 1
+                c_name = f"gene_{self.assembler._gene_counter}"
+                c_code = p_code.replace(p_name, c_name)
+                if not self.pruner.is_duplicate(c_code):
+                    batch.append(([], c_code, c_name))
+                # 1-2 mutated copies
+                for _ in range(random.randint(1, 2)):
+                    self.assembler._gene_counter += 1
+                    c_name = f"gene_{self.assembler._gene_counter}"
+                    c_code = self._mutate_code(p_code, p_name, c_name, gene_pool)
+                    if not self.pruner.is_duplicate(c_code):
+                        batch.append(([], c_code, c_name))
+
+        # --- Primordial soup: ~30% from historical urn memory ---
+        # The urn is the non-Markovian record; even extinct lineages
+        # can be partially rediscovered through convergent assembly.
+        soup_count = max(1, int(self.urn.size() * 0.3))
+        for _ in range(soup_count):
             k = random.randint(3, MAX_EXPRESSION_TOKENS)
             tokens = self.urn.sample(k)
-            # Endosymbiosis: 6% chance of horizontal gene transfer
-            if random.random() < 0.06 and gene_names:
-                tokens.append(random.choice(gene_names))
             code, gene_name = self.assembler.assemble(tokens)
-            if self.pruner.is_duplicate(code):
-                self.dead_count += 1
-                self._log_dead(gene_name, code, "DUPLICATE")
-                self._write_log_entry(gene_name, code, "DEAD", False)
-                continue
-            batch.append((tokens, code, gene_name))
+            if not self.pruner.is_duplicate(code):
+                batch.append((tokens, code, gene_name))
 
-        # 2. Parallel Lean verification (workers = performance, not biology)
+        # Parallel Lean verification
+        new_living: list[dict] = []
         if batch:
             lib = self._library_cache
             workers = min(len(batch), self._workers)
@@ -285,9 +302,13 @@ class EvolutionEngine:
                 for future in concurrent.futures.as_completed(future_map):
                     tokens, code, gene_name = future_map[future]
                     result = future.result()
-                    self._handle_candidate(tokens, code, gene_name, result)
+                    alive_code = self._handle_candidate(tokens, code, gene_name, result)
+                    if alive_code:
+                        new_living.append({"name": gene_name, "code": alive_code})
 
-        # 3. Catastrophe check
+        self._living_genes = new_living
+
+        # Catastrophe check
         self._catastrophe_timer -= 1
         if self._catastrophe_timer <= 0:
             urn_ratio = self.urn.size() / max(1, MAX_URN_SIZE)
@@ -297,21 +318,46 @@ class EvolutionEngine:
                 self._last_catastrophe_gen = self.generation
             self._catastrophe_timer = CATASTROPHE_MIN_INTERVAL
 
-        # 5. Per-generation maintenance
+        # Per-generation maintenance
         if self.generation % 10 == 0:
             self.urn.decay(DECAY_RATE)
         if self.generation % 5 == 0 and self.urn.size() > 0:
-            # Slight penalty to dead-end tokens
             for t in self.urn.weights:
                 self.urn.weights[t] *= 0.99
         self.pruner.prune_urn(self.urn, MAX_URN_SIZE)
 
-        # 6. Periodic state save (every 50 generations)
+        # Periodic state save
         if self.generation % 50 == 0:
             self._save_state()
 
-        # 7. Commit generation
+        # Commit generation
         self.generation += 1
+
+    # ------------------------------------------------------------------
+    # Mutation operators (blind string manipulation)
+    # ------------------------------------------------------------------
+
+    def _mutate_code(
+        self, parent_code: str, parent_name: str,
+        child_name: str, gene_pool: list[str],
+    ) -> str:
+        """Create a mutated child: token swap/insert + 10% endosymbiosis."""
+        code = parent_code.replace(parent_name, child_name)
+        tokens = code.split()
+        if not tokens:
+            return code
+        urn_tokens = list(self.urn.weights.keys())
+        if not urn_tokens:
+            return code
+        pos = random.randint(0, len(tokens) - 1)
+        if random.random() < 0.5:
+            tokens[pos] = random.choice(urn_tokens)
+        else:
+            tokens.insert(pos, random.choice(urn_tokens))
+        if random.random() < 0.10 and gene_pool:
+            pos2 = random.randint(0, len(tokens) - 1)
+            tokens.insert(pos2, random.choice(gene_pool))
+        return " ".join(tokens)
 
     # ------------------------------------------------------------------
     # Per-candidate result handler
@@ -319,10 +365,10 @@ class EvolutionEngine:
 
     def _handle_candidate(
         self, tokens: list[str], code: str, gene_name: str, result
-    ) -> bool:
+    ) -> Optional[str]:
         """Process a single candidate's Lean verification result.
 
-        Returns True if the candidate survived (ALIVE)."""
+        Returns the gene's source code if alive, None if dead."""
         if result.alive:
             # --- Sorry detection ---
             has_sorry = "sorry" in code
@@ -344,13 +390,13 @@ class EvolutionEngine:
             self._library_cache = self._load_library_cache()
             self._log_alive(gene_name, code, result, penalty, is_tainted)
             self._write_log_entry(gene_name, code, "ALIVE", is_tainted)
-            return True
+            return code
         else:
             self.dead_count += 1
             self.pruner.record_code(code)
             self._log_dead(gene_name, code, "COMPILE_ERROR")
             self._write_log_entry(gene_name, code, "DEAD", False)
-            return False
+            return None
 
     # ------------------------------------------------------------------
     # Catastrophe system
