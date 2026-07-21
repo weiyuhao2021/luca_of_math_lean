@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luca_of_math_lean"
+version = "0.1.0"
+description = "A zero-cost artificial life kernel where Lean 4 compiler laws and non-Markovian Pólya urn dynamics drive open-ended mathematical evolution."
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Yuhao Wei"},
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+luca = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
