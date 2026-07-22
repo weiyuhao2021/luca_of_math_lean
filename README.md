@@ -179,3 +179,57 @@ The project embodies three unbreakable rules:
 1. **Zero human intervention during runtime.** Humans define the physical laws at creation (initial tokens, Lean version, catastrophe formula). After `python main.py` starts, no semantic reading, no goal injection, no parameter tweaking.
 2. **Reverence for boredom and death.** The 99.99% DEAD rate is *correct*. Trivial surviving genes like `def gene_N : Nat := 0` are *correct*. Do not attempt to improve the survival rate.
 3. **The Babel Hypothesis.** The system may evolve mathematical structures as complex as calculus that no human can understand. The syllogism renderer is a minimal "participation indicator" for the creator — not a translation tool.
+
+---
+
+## Reflections (已知局限)
+
+These are not bugs — they are honest constraints of the current design, recorded for future iteration.
+这些问题不是 bug，是当前设计阶段的诚实约束。记录下来供未来迭代。
+
+### 1. Binary Selection Pressure / 选择压力的二元化
+
+The only "natural selection" is the Lean compiler: compiles = alive, otherwise = dead. Real-world selection involves metabolic efficiency, resource competition, niche differentiation, and symbiotic dynamics. Currently missing:
+目前唯一的"自然选择"是 Lean 编译器：编译通过 = 存活，否则 = 死亡。自然界的选择压力远不止生死：
+
+- **Metabolic cost differentiation / 代谢成本差异化** — different genes should consume different amounts of "energy"; longer code should be more expensive.
+- **Niche competition / 生态位竞争** — genes of similar type should crowd each other out (currently only handled by the urn capacity cap).
+- **Cooperation & parasitism / 合作与寄生** — inter-gene dependencies only manifest as compile-time references, with no mutualistic or antagonistic dynamics.
+
+`metabolic_penalty` already scales reinforcement weight by code length, but it is only a first-order approximation. Genuine ecological dynamics would require richer interaction models.
+`metabolic_penalty` 已根据代码长度缩放权重加成，但这只是第一阶近似。真正的生态动力学需要更丰富的交互模型。
+
+### 2. Overly Discrete Generations / 过于明确的代际分割
+
+The current model is discrete: all candidates compile in parallel within one generation, then the slate is wiped clean for the next. Nature has no such neat generational boundaries — parents and offspring coexist, death is gradual, birth is continuous.
+当前是离散代模型：一代内所有候选并行编译，完成后清空，下一代全新开始。自然界不存在这样整齐的"代"边界——亲代和子代共存，死亡是渐进的，出生是连续的。
+
+A more ideal model would be **continuous time + overlapping generations**: genes have lifespans, can die at any moment, and produce offspring at any time. Implementing this is a significant engineering challenge; the current compromise (parent-based reproduction + historical urn memory) is a pragmatic approximation.
+更理想的模型是**连续时间 + 重叠代**：基因有寿命、随时可能死亡、随时产生子代。但这对实现复杂度是巨大挑战，当前折中（亲子繁殖 + 历史瓮记忆）是实用的近似。
+
+### 3. Population Size & Computation Speed / 种群规模与计算速度
+
+Real evolution relies on **massive populations**: millions of individuals across thousands of generations. Currently:
+真实演化依赖**巨大种群**：数以百万计的个体、数以万计的世代。当前：
+
+- Population ≈ tens to hundreds (number of tokens in the urn). / 种群 ≈ 几十到几百（瓮中 token 数）。
+- Parallelism is bounded by CPU cores (`--workers` caps at dozens). / 并发上限受 CPU 核心限制（`--workers` 最多几十）。
+- Single-generation latency is high (500 candidates × 2s ≈ thousands of seconds). / 单代耗时长（500 候选 × 2s = 千秒级）。
+
+This means the combinatorial space explorable on human timescales is severely limited. A true "Cambrian Explosion" would likely require million-fold parallelism on distributed clusters, GPU-accelerated compilers, or an entirely different hardware architecture. On a single machine, we can only observe evolution at a microscopic scale — but just as telescopes can see billions of light-years away, tiny trends accumulated over enough time might still build massive structures.
+这意味着在人类时间尺度上，系统能探索的组合空间极其有限。真正的"寒武纪大爆发"可能需要分布式集群上的百万级并行、GPU 加速的编译器、或完全不同的硬件架构。在单机上，我们只能观察微观尺度的演化——但正如望远镜能看到亿万光年外，微小的趋势经过足够长的时间也可能积累出巨大的结构。
+
+---
+
+## Future World / 未来世界
+
+What would mathematics look like for a civilization born on a neutron star, or within a plasma state — where there are no rigid bodies, no Euclidean intuitions, only probability fields and fluid dynamics as the native sensory ground? Their axioms would not begin with points and lines, but with distributions and flows. Their "geometry" might be measure-theoretic from birth. Their concept of "equality" might be replaced by "convergence in distribution."
+
+诞生于中子星或等离子态中的文明，他们的数学会是什么样子？那里没有刚体，没有欧几里得直觉——概率场和流体动力学才是原生的感官基底。他们的公理不会以点和线为起点，而是以分布和流为起点。他们的"几何"可能生来就是测度论的。他们的"相等"概念可能被"依分布收敛"取代。
+
+If LUCA is allowed to run long enough — truly long, on hardware we cannot yet imagine — what kind of mathematics might it discover? Not *our* mathematics, built on the intuitions of savanna apes who evolved to track rigid objects and count discrete items. Something else. Something that might look as alien to us as general relativity would to a flatworm.
+
+如果 LUCA 被允许运行足够久——真正地久，在我们尚无法想象的硬件上——它会发现什么样的数学？不是*我们*的数学，建立在稀树草原猿猴的直觉之上，那些猿猴演化出来是为了追踪刚体和计数离散物体。是别的什么。是对我们来说就像广义相对论之于扁形虫那样陌生的东西。
+
+This is not a feature request. It is the only question that matters.
+这不是功能需求。这是唯一重要的问题。
